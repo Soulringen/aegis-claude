@@ -2,7 +2,7 @@
 
 > **EN** — A Windows reset for the local identifiers that Claude Desktop and Claude Code keep on your PC. The next launch creates new ones. Your chats stay.
 >
-> **RU** — Сброс локальных идентификаторов Claude Desktop и Claude Code в Windows. Следующий запуск создаёт новые. Чаты остаются.
+> **RU** — Сброс локальных идентификаторов Claude Desktop и Claude Code в Windows. Чаты остаются.
 
 [Русский](#русский) · [English](#english)
 
