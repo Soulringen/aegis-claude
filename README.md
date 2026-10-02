@@ -6,6 +6,14 @@
 
 [Русский](#русский) · [English](#english)
 
+<div align="center">
+
+[![Download ZIP](https://img.shields.io/badge/Download-ZIP-2ea44f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Soulringen/aegis-claude/archive/refs/heads/main.zip)
+
+**[⬇ Скачать / Download ZIP](https://github.com/Soulringen/aegis-claude/archive/refs/heads/main.zip)** — распакуйте и запустите `Reset-ClaudeIdentity.bat` / unzip and run `Reset-ClaudeIdentity.bat`
+
+</div>
+
 ---
 
 ## Русский
@@ -14,9 +22,10 @@ Claude запоминает компьютер отдельно от аккау�
 
 ### Быстрый старт
 
-1. Закройте Claude.
-2. Дважды щёлкните `Reset-ClaudeIdentity.bat`.
-3. В окне нажмите `1` — удалить, или `2` — выйти без изменений.
+1. Нажмите кнопку **Download ZIP** выше и распакуйте папку.
+2. Закройте Claude.
+3. Дважды щёлкните `Reset-ClaudeIdentity.bat`.
+4. В окне нажмите `1` — удалить, или `2` — выйти без изменений.
 
 Сначала скрипт показывает, что нашёл, и ничего не трогает, пока вы не выберете `1`. Само приложение он не удаляет.
 
@@ -54,9 +63,10 @@ Claude remembers the computer apart from the account. While those marks stay on 
 
 ### Quick start
 
-1. Quit Claude.
-2. Double-click `Reset-ClaudeIdentity.bat`.
-3. In the window press `1` to delete, or `2` to exit without changes.
+1. Click the **Download ZIP** button above and unzip the folder.
+2. Quit Claude.
+3. Double-click `Reset-ClaudeIdentity.bat`.
+4. In the window press `1` to delete, or `2` to exit without changes.
 
 The script first shows what it found and touches nothing until you choose `1`. It does not uninstall the app.
 
