@@ -12,6 +12,9 @@
 
 **[⬇ Скачать / Download ZIP](https://github.com/Soulringen/aegis-claude/archive/refs/heads/main.zip)** — распакуйте и запустите `Reset-ClaudeIdentity.bat` / unzip and run `Reset-ClaudeIdentity.bat`
 
+[![Telegram chat](https://img.shields.io/badge/Чат_—_обсуждаем_тут-Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+7s28qgf7IWliMDdi)
+[![Telegram channel](https://img.shields.io/badge/Ресеты_Claude_и_Codex-Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/my_ai_mayak)
+
 </div>
 
 ---
@@ -95,3 +98,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Reset-ClaudeIdentity.ps1
 ```
 
 If a file is in use, the script says so — quit Claude and run it again.
+
+---
+
+## Сообщество / Community
+
+- **[Чат — обсуждаем тут](https://t.me/+7s28qgf7IWliMDdi)** — вопросы, помощь, обсуждение. / Questions, help, discussion.
+- **[Канал «AI Маяк»](https://t.me/my_ai_mayak)** — уведомляем о ресетах Claude и Codex и прогнозируем их. / We post and predict Claude and Codex resets.
