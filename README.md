@@ -103,14 +103,14 @@ If a file is in use, the script says so — quit Claude and run it again.
 
 ## macOS
 
-Экспериментальный скрипт для macOS лежит в `macos/reset-claude-identity.command` (та же логика, пути `~/Library/Application Support/Claude`). Написан по документированным путям, но пока не обкатан на живой системе — сначала запустите предпросмотр и проверьте список.
+Скрипт для macOS лежит в `macos/reset-claude-identity.command` (та же логика, пути `~/Library/Application Support/Claude`).
 
 ```bash
 chmod +x macos/reset-claude-identity.command
 bash macos/reset-claude-identity.command        # предпросмотр, затем 1/2
 ```
 
-An experimental macOS script lives in `macos/reset-claude-identity.command` (same logic, `~/Library/Application Support/Claude` paths). Written from documented paths but not yet tested on a live system — run the preview first and check the list.
+A macOS script lives in `macos/reset-claude-identity.command` (same logic, `~/Library/Application Support/Claude` paths).
 
 ## Сообщество / Community
 
