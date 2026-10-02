@@ -1,0 +1,9 @@
+* text=auto
+
+# Keep shell scripts LF so the shebang works on macOS/Linux
+*.sh text eol=lf
+*.command text eol=lf
+
+# Windows launchers stay CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
