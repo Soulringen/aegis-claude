@@ -115,4 +115,4 @@ A macOS script lives in `macos/reset-claude-identity.command` (same logic, `~/Li
 ## Сообщество / Community
 
 - **[Чат — обсуждаем тут](https://t.me/+7s28qgf7IWliMDdi)** — вопросы, помощь, обсуждение. / Questions, help, discussion.
-- **[Канал «AI Маяк»](https://t.me/my_ai_mayak)** — уведомляем о ресетах Claude и Codex и прогнозируем их. / We post and predict Claude and Codex resets.
+- **[Канал «AI Маяк»](https://t.me/my_ai_mayak)** — уведомляем о ресетах лимитов Claude и Codex и прогнозируем их. / We post and predict Claude and Codex resets.
