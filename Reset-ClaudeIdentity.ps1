@@ -193,7 +193,9 @@ function Get-ClaudeProcesses {
         $cmd = [string]$proc.CommandLine
         $match = $false
         if ($name -match '^(Claude|claude)\.exe$') { $match = $true }
+        elseif ($name -match '^cowork') { $match = $true }
         elseif ($exe -like '*\AnthropicClaude\*') { $match = $true }
+        elseif ($exe -like '*\WindowsApps\Claude*') { $match = $true }
         elseif ($cmd -match 'claude-code|@anthropic-ai\\claude' -and $exe -notlike '*\Cursor\*' -and $cmd -notlike '*\Cursor\*') {
             $match = $true
         }
@@ -341,9 +343,9 @@ Write-Host ''
 Write-Host 'Claude local identity reset'
 Write-Host '---------------------------'
 if ($Apply) {
-    Write-Host 'Mode: APPLY'
+    Write-Host 'Mode: APPLY (files will be deleted)'
 } else {
-    Write-Host 'Mode: DRY-RUN (no files deleted)'
+    Write-Host 'Mode: PREVIEW (deletion starts only after you choose 1)'
 }
 if ($Force -and -not $Apply) {
     Write-Host '-Force is ignored without -Apply.'
@@ -424,6 +426,14 @@ if (-not $Apply -and -not $Force) {
 }
 
 Write-Host ''
+Get-Service -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '*cowork*' -or $_.DisplayName -like '*Cowork*' -or $_.DisplayName -like '*Claude*' } |
+    ForEach-Object {
+        if ($_.Status -ne 'Stopped') {
+            Write-Host ('Stopping service {0}' -f $_.Name)
+            Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
+        }
+    }
 foreach ($proc in $procs) {
     Write-Host ('Stopping PID {0} {1}' -f $proc.ProcessId, $proc.Name)
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
@@ -465,4 +475,4 @@ if ($failed.Count -eq 0) {
 Write-Host ''
 Write-Host 'Still present:'
 foreach ($target in $failed) { Write-Host "  $target" }
-Wait-Exit 2 'Не все файлы удалились. Закрой Claude и запусти скрипт с -Apply ещё раз.'
+Wait-Exit 2 'Не все файлы удалились. Полностью закрой Claude и запусти этот файл ещё раз.'
