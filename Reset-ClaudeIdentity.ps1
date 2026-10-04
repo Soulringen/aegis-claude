@@ -46,7 +46,7 @@ function Wait-Exit {
     Write-Host ''
     Write-Host $Message
     Write-Host ''
-    Read-Host 'Нажми Enter, чтобы закрыть окно' | Out-Null
+    Read-Host 'Нажмите Enter, чтобы закрыть окно' | Out-Null
     exit $Code
 }
 
@@ -533,4 +533,4 @@ if ($failed.Count -eq 0) {
 Write-Host ''
 Write-Host 'Still present:'
 foreach ($target in $failed) { Write-Host "  $target" }
-Wait-Exit 2 'Не все файлы удалились. Полностью закрой Claude и запусти этот файл ещё раз.'
+Wait-Exit 2 'Не все файлы удалились. Полностью закройте Claude и запустите этот файл ещё раз.'
