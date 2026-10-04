@@ -34,6 +34,10 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Continue'
 
+# Desktop data roots (real %APPDATA%\Claude and any Microsoft Store package).
+# Filled in while building the target list, used by the markers display.
+$DesktopRoots = @()
+
 function Wait-Exit {
     param(
         [int]$Code,
@@ -123,7 +127,20 @@ function Get-JsonProp {
     return $prop.Value
 }
 
+function Get-FirstExisting {
+    param([string[]]$Roots, [string]$Leaf)
+    foreach ($r in $Roots) {
+        if ([string]::IsNullOrWhiteSpace($r)) { continue }
+        $p = Join-Path $r $Leaf
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return $null
+}
+
 function Show-IdentityMarkers {
+    $roots = @($DesktopRoots)
+    if ($roots.Count -eq 0) { $roots = @((Join-Path $env:APPDATA 'Claude')) }
+
     $cli = Join-Path $env:USERPROFILE '.claude.json'
     if (Test-Path -LiteralPath $cli) {
         try {
@@ -144,16 +161,16 @@ function Show-IdentityMarkers {
         Write-Host '  CLI .claude.json: absent'
     }
 
-    $didPath = Join-Path $env:APPDATA 'Claude\ant-did'
-    if (Test-Path -LiteralPath $didPath) {
+    $didPath = Get-FirstExisting $roots 'ant-did'
+    if ($didPath) {
         $raw = [System.IO.File]::ReadAllText($didPath)
         Write-Host ('  ant-did       : {0}' -f (Get-Prefix $raw))
     } else {
         Write-Host '  ant-did       : absent'
     }
 
-    $regPath = Join-Path $env:APPDATA 'Claude\ant-device-registry.json'
-    if (Test-Path -LiteralPath $regPath) {
+    $regPath = Get-FirstExisting $roots 'ant-device-registry.json'
+    if ($regPath) {
         try {
             $reg = Read-Utf8Json $regPath
             $count = @($reg.PSObject.Properties).Count
@@ -163,8 +180,8 @@ function Show-IdentityMarkers {
         }
     }
 
-    $rcPath = Join-Path $env:APPDATA 'Claude\remote-control-state.json'
-    if (Test-Path -LiteralPath $rcPath) {
+    $rcPath = Get-FirstExisting $roots 'remote-control-state.json'
+    if ($rcPath) {
         try {
             $rc = Read-Utf8Json $rcPath
             Write-Host ('  telemetrySalt : {0}' -f (Get-Prefix ([string](Get-JsonProp $rc 'telemetrySalt'))))
@@ -173,8 +190,8 @@ function Show-IdentityMarkers {
         }
     }
 
-    $ccdPath = Join-Path $env:APPDATA 'Claude\ccd-ids.json'
-    if (Test-Path -LiteralPath $ccdPath) {
+    $ccdPath = Get-FirstExisting $roots 'ccd-ids.json'
+    if ($ccdPath) {
         try {
             $ccd = Read-Utf8Json $ccdPath
             Write-Host ('  ccd salt      : {0}' -f (Get-Prefix ([string](Get-JsonProp $ccd 'salt'))))
@@ -246,10 +263,11 @@ function Remove-Target {
 }
 
 function Clear-DesktopIdentityFields {
-    $path = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'
-    if (-not (Test-Path -LiteralPath $path)) { return $true }
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
     try {
-        $config = Read-Utf8Json $path
+        $config = Read-Utf8Json $Path
         $prefs = Get-JsonProp $config 'preferences'
         if ($null -ne $prefs) {
             $names = @($prefs.PSObject.Properties.Name)
@@ -260,11 +278,38 @@ function Clear-DesktopIdentityFields {
             }
         }
         $json = $config | ConvertTo-Json -Depth 30
-        [System.IO.File]::WriteAllText($path, $json)
+        [System.IO.File]::WriteAllText($Path, $json)
         return $true
     } catch {
-        Write-Host "Could not edit claude_desktop_config.json"
+        Write-Host "Could not edit $Path"
         return $false
+    }
+}
+
+$DesktopIdentityNames = @(
+    'ant-did', 'ant-device-registry.json', 'remote-control-state.json', 'ccd-ids.json', 'config.json',
+    'Preferences', 'Local State', 'DIPS', 'DIPS-wal', 'SharedStorage', 'SharedStorage-wal',
+    'InterestGroups', 'InterestGroups-wal', 'declarative_performance_observer.db',
+    'declarative_performance_observer.db-journal', 'fcache'
+)
+$DesktopChromiumNames = @(
+    'Network', 'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage', 'shared_proto_db',
+    'sentry', 'logs', 'Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
+    'blob_storage', 'Crashpad', 'Partitions', 'File System', 'VideoDecodeStats', 'Shared Dictionary',
+    'Service Worker', 'Storage'
+)
+
+function Add-DesktopDataTargets {
+    param([System.Collections.Generic.List[string]]$List, [string]$Root)
+    foreach ($name in $DesktopIdentityNames) { Add-UniquePath -List $List -Path (Join-Path $Root $name) }
+    foreach ($name in $DesktopChromiumNames) { Add-UniquePath -List $List -Path (Join-Path $Root $name) }
+}
+
+function Add-CacheBreakTargets {
+    param([System.Collections.Generic.List[string]]$List, [string]$Dir)
+    if (Test-Path -LiteralPath $Dir) {
+        Get-ChildItem -LiteralPath $Dir -Force -File -Filter 'cache-break-state-*.json' -ErrorAction SilentlyContinue |
+            ForEach-Object { Add-UniquePath -List $List -Path $_.FullName }
     }
 }
 
@@ -272,27 +317,31 @@ $raw = New-Object System.Collections.Generic.List[string]
 $claudeHome = Join-Path $env:USERPROFILE '.claude'
 $desktop = Join-Path $env:APPDATA 'Claude'
 
+# claude_desktop_config.json files are edited (device fields stripped), not deleted
+$configEdits = New-Object System.Collections.Generic.List[string]
+[void]$configEdits.Add((Join-Path $desktop 'claude_desktop_config.json'))
+
+# chat folders we keep and show
+$keptPaths = New-Object System.Collections.Generic.List[string]
+foreach ($p in @(
+    (Join-Path $claudeHome 'projects'),
+    (Join-Path $claudeHome 'sessions'),
+    (Join-Path $claudeHome 'file-history'),
+    (Join-Path $claudeHome 'settings.json'),
+    (Join-Path $desktop 'claude-code-sessions'),
+    (Join-Path $desktop 'local-agent-mode-sessions')
+)) { [void]$keptPaths.Add($p) }
+
+# desktop data roots for the markers display
+$DesktopRoots = @($desktop)
+
+# CLI (~/.claude): identity, not chats
 foreach ($name in @('.credentials.json', 'backups', 'cache', 'ide', 'session-env')) {
     Add-UniquePath -List $raw -Path (Join-Path $claudeHome $name)
 }
 
-foreach ($name in @(
-    'ant-did', 'ant-device-registry.json', 'remote-control-state.json', 'ccd-ids.json', 'config.json',
-    'Preferences', 'Local State', 'DIPS', 'DIPS-wal', 'SharedStorage', 'SharedStorage-wal',
-    'InterestGroups', 'InterestGroups-wal', 'declarative_performance_observer.db',
-    'declarative_performance_observer.db-journal', 'fcache'
-)) {
-    Add-UniquePath -List $raw -Path (Join-Path $desktop $name)
-}
-
-foreach ($name in @(
-    'Network', 'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage', 'shared_proto_db',
-    'sentry', 'logs', 'Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
-    'blob_storage', 'Crashpad', 'Partitions', 'File System', 'VideoDecodeStats', 'Shared Dictionary',
-    'Service Worker', 'Storage'
-)) {
-    Add-UniquePath -List $raw -Path (Join-Path $desktop $name)
-}
+# Squirrel / normal install desktop data
+Add-DesktopDataTargets -List $raw -Root $desktop
 
 foreach ($root in @(
     (Join-Path $env:LOCALAPPDATA 'Claude\logs'),
@@ -303,21 +352,35 @@ foreach ($root in @(
     Add-UniquePath -List $raw -Path $root
 }
 
-$tempClaude = Join-Path $env:TEMP 'claude'
-if (Test-Path -LiteralPath $tempClaude) {
-    Get-ChildItem -LiteralPath $tempClaude -Force -File -Filter 'cache-break-state-*.json' -ErrorAction SilentlyContinue |
-        ForEach-Object { Add-UniquePath -List $raw -Path $_.FullName }
-}
+Add-CacheBreakTargets -List $raw -Dir (Join-Path $env:TEMP 'claude')
 
 Get-ChildItem -LiteralPath $env:USERPROFILE -Force -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -eq '.claude.json' -or $_.Name -like '.claude.json.*' } |
     ForEach-Object { Add-UniquePath -List $raw -Path $_.FullName }
 
+# Microsoft Store (MSIX) install: the package data is virtualized under
+# ...\Packages\Claude_*\LocalCache\. The package root has protected ACLs and
+# cannot be deleted, so we only touch the identity data inside it.
 $packageRoot = Join-Path $env:LOCALAPPDATA 'Packages'
 if (Test-Path -LiteralPath $packageRoot) {
     Get-ChildItem -LiteralPath $packageRoot -Force -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'Claude*' -or $_.Name -like 'Anthropic*' } |
-        ForEach-Object { Add-UniquePath -List $raw -Path $_.FullName }
+        ForEach-Object {
+            $lc = Join-Path $_.FullName 'LocalCache'
+            $roaming = Join-Path $lc 'Roaming\Claude'
+            if (Test-Path -LiteralPath $roaming) { $DesktopRoots += $roaming }
+            Add-DesktopDataTargets -List $raw -Root $roaming
+            [void]$configEdits.Add((Join-Path $roaming 'claude_desktop_config.json'))
+            foreach ($p in @(
+                (Join-Path $roaming 'claude-code-sessions'),
+                (Join-Path $roaming 'local-agent-mode-sessions')
+            )) { [void]$keptPaths.Add($p) }
+            Add-UniquePath -List $raw -Path (Join-Path $lc 'Local\Claude\logs')
+            Add-UniquePath -List $raw -Path (Join-Path $lc 'Local\Claude-3p')
+            Add-UniquePath -List $raw -Path (Join-Path $lc 'Local\claude-cli-nodejs')
+            Add-CacheBreakTargets -List $raw -Dir (Join-Path $lc 'Local\Temp\claude')
+            Add-CacheBreakTargets -List $raw -Dir (Join-Path $_.FullName 'TempState\claude')
+        }
 }
 
 $install = Join-Path $env:LOCALAPPDATA 'AnthropicClaude'
@@ -379,19 +442,10 @@ if ($procs.Count -eq 0) {
     }
 }
 
-$kept = @(
-    (Join-Path $env:USERPROFILE '.claude\projects'),
-    (Join-Path $env:USERPROFILE '.claude\sessions'),
-    (Join-Path $env:USERPROFILE '.claude\file-history'),
-    (Join-Path $env:USERPROFILE '.claude\settings.json'),
-    (Join-Path $env:APPDATA 'Claude\claude-code-sessions'),
-    (Join-Path $env:APPDATA 'Claude\local-agent-mode-sessions')
-)
-
 Write-Host ''
 Write-Host 'Kept (local chats):'
 $keptShown = $false
-foreach ($path in $kept) {
+foreach ($path in $keptPaths) {
     if (-not (Test-Path -LiteralPath $path)) { continue }
     $keptShown = $true
     $kind = 'file'
@@ -460,8 +514,12 @@ if ($failed.Count -gt 0) {
 }
 
 Write-Host 'Editing claude_desktop_config.json'
-if (-not (Clear-DesktopIdentityFields)) {
-    [void]$failed.Add((Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'))
+foreach ($cfg in $configEdits) {
+    if (Test-Path -LiteralPath $cfg) {
+        if (-not (Clear-DesktopIdentityFields -Path $cfg)) {
+            [void]$failed.Add($cfg)
+        }
+    }
 }
 
 Write-Host ''
