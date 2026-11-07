@@ -36,11 +36,11 @@ Claude запоминает компьютер отдельно от аккау�
 
 | Удаляется | Остаётся |
 | --- | --- |
-| `machineID`, `userID`, `ant-did` | диалоги Claude Code (`%USERPROFILE%\.claude\projects`) |
-| реестр устройства, соли телеметрии | сессии и история файлов |
-| cookies и локальное хранилище приложения | `settings.json` |
-| сохранённый логин | сессии десктопного приложения |
-| | установка в `%LOCALAPPDATA%\AnthropicClaude` |
+| `machineID`, `userID`, `ant-did` | диалоги и память проектов (`%USERPROFILE%\.claude\projects`, `MEMORY.md`) |
+| реестр устройства, соли и очередь телеметрии | сессии и история файлов |
+| журналы `config.json`, история лимитов и метки аккаунтов | `settings.json` |
+| cookies и локальное хранилище приложения | сессии десктопного приложения |
+| сохранённый логин | установка в `%LOCALAPPDATA%\AnthropicClaude` |
 
 Логин сбрасывается — войти нужно заново.
 
@@ -77,11 +77,11 @@ The script first shows what it found and touches nothing until you choose `1`. I
 
 | Removed | Kept |
 | --- | --- |
-| `machineID`, `userID`, `ant-did` | Claude Code transcripts (`%USERPROFILE%\.claude\projects`) |
-| device registry, telemetry salts | sessions and file history |
-| the app's cookies and local storage | `settings.json` |
-| the saved login | desktop session folders |
-| | install at `%LOCALAPPDATA%\AnthropicClaude` |
+| `machineID`, `userID`, `ant-did` | Claude Code transcripts and project memory (`%USERPROFILE%\.claude\projects`, `MEMORY.md`) |
+| device registry, telemetry salts and queued events | sessions and file history |
+| `config.json` journals, usage history, and account markers | `settings.json` |
+| the app's cookies and local storage | desktop session folders |
+| the saved login | install at `%LOCALAPPDATA%\AnthropicClaude` |
 
 The saved login is cleared, so you sign in again.
 

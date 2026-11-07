@@ -7,7 +7,7 @@
   Prints the plan and deletes nothing unless you choose 1 (or pass -Apply).
   The next launch recreates machineID, userID, ant-did, the device registry,
   telemetry salts, and Chromium storage.
-  Local chat transcripts are kept.
+  Local chat transcripts and project memory (MEMORY.md) are kept.
 
   The Squirrel install under %LOCALAPPDATA%\AnthropicClaude is kept
   (claude.exe stays). Windows locale, timezone, public IP, and Chrome/Edge
@@ -161,6 +161,26 @@ function Show-IdentityMarkers {
         Write-Host '  CLI .claude.json: absent'
     }
 
+    $innerCli = Join-Path (Join-Path $env:USERPROFILE '.claude') '.claude.json'
+    if (Test-Path -LiteralPath $innerCli) {
+        try {
+            $ij = Read-Utf8Json $innerCli
+            Write-Host ('  .claude/.claude.json machineID: {0}' -f (Get-Prefix ([string](Get-JsonProp $ij 'machineID'))))
+        } catch {
+            Write-Host '  .claude/.claude.json: present, unreadable'
+        }
+    }
+
+    $stampPath = Join-Path (Join-Path $env:USERPROFILE '.claude') 'policy-limits.json.stamp.json'
+    if (Test-Path -LiteralPath $stampPath) {
+        try {
+            $st = Read-Utf8Json $stampPath
+            Write-Host ('  policy stamp  : {0}' -f (Get-Prefix ([string](Get-JsonProp $st 'identity'))))
+        } catch {
+            Write-Host '  policy stamp  : present'
+        }
+    }
+
     $didPath = Get-FirstExisting $roots 'ant-did'
     if ($didPath) {
         $raw = [System.IO.File]::ReadAllText($didPath)
@@ -205,6 +225,7 @@ function Get-ClaudeProcesses {
     $hits = New-Object System.Collections.Generic.List[object]
     $cim = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
     foreach ($proc in $cim) {
+        if ($proc.ProcessId -eq $PID) { continue }
         $name = [string]$proc.Name
         $exe = [string]$proc.ExecutablePath
         $cmd = [string]$proc.CommandLine
@@ -266,19 +287,30 @@ function Clear-DesktopIdentityFields {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
     if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    $uuidPattern = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
     try {
         $config = Read-Utf8Json $Path
         $prefs = Get-JsonProp $config 'preferences'
         if ($null -ne $prefs) {
             $names = @($prefs.PSObject.Properties.Name)
             foreach ($name in $names) {
-                if ($name -eq 'remoteToolsDeviceName' -or $name -like '*ByAccount') {
+                if ($name -eq 'remoteToolsDeviceName' -or $name -like '*ByAccount' -or $name -match $uuidPattern) {
                     $prefs.PSObject.Properties.Remove($name)
+                }
+            }
+            $epitaxy = Get-JsonProp $prefs 'epitaxyPrefs'
+            if ($null -ne $epitaxy) {
+                $epNames = @($epitaxy.PSObject.Properties.Name)
+                foreach ($epName in $epNames) {
+                    if ($epName -match $uuidPattern -or $epName -in @('dframe-code-sections', 'epitaxy-serene-whistle-decided', 'epitaxy-split-suggestion')) {
+                        $epitaxy.PSObject.Properties.Remove($epName)
+                    }
                 }
             }
         }
         $json = $config | ConvertTo-Json -Depth 30
-        [System.IO.File]::WriteAllText($Path, $json)
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
         return $true
     } catch {
         Write-Host "Could not edit $Path"
@@ -287,14 +319,27 @@ function Clear-DesktopIdentityFields {
 }
 
 $DesktopIdentityNames = @(
-    'ant-did', 'ant-device-registry.json', 'remote-control-state.json', 'ccd-ids.json', 'config.json',
+    'ant-did', 'ant-device-registry.json', 'ant-device-key-generation.json',
+    'remote-control-state.json', 'ccd-ids.json', 'ccd-session-presets.json', 'ccd-session-secrets',
+    'config.json', 'config.json.journal', 'plan-usage-history.json',
+    'buddy-tokens.json', 'ssh-remote-server-state.json',
+    'cowork-enabled-cli-ops.json', 'cowork-memory-resets.json', 'cowork-clientdata-cache.json',
+    'cowork-deletion-outbox.json', 'cowork-gb-cache.json', 'cowork-plugin-mcp-shadow.json',
+    'cowork-policy-limits-cache.json', 'cowork-wipe-record.json', 'cowork_account_settings.json', 'cowork_settings.json',
+    'extensions-blocklist.json', 'mcp-user-tool-toggles.json', 'git-worktrees.json',
+    'memory-migration-state.json', 'remote-session-spaces.json', 'restored-ids.json',
+    'local-session-state.json', 'local-sessions.json', 'states-10m.json', 'stats-cache.json',
+    'projects-sent-to-a-session-host.json', 'msal-cache.json', 'msal_token_cache.json', 'tokens.json',
+    'window-state.json', 'design',
+    'spaces-present', 'rpm', 'plugin-list', 'git-shadow', 'pending-uploads', 'preview-last-frames', 'side-session-notes',
     'Preferences', 'Local State', 'DIPS', 'DIPS-wal', 'SharedStorage', 'SharedStorage-wal',
     'InterestGroups', 'InterestGroups-wal', 'declarative_performance_observer.db',
     'declarative_performance_observer.db-journal', 'fcache'
 )
 $DesktopChromiumNames = @(
     'Network', 'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage', 'shared_proto_db',
-    'sentry', 'logs', 'Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
+    'sentry', 'logs', 'Cache', 'Code Cache', 'GPUCache', 'GPUPersistentCache', 'GrShaderCache', 'ShaderCache',
+    'DawnGraphiteCache', 'DawnWebGPUCache',
     'blob_storage', 'Crashpad', 'Partitions', 'File System', 'VideoDecodeStats', 'Shared Dictionary',
     'Service Worker', 'Storage'
 )
@@ -303,13 +348,17 @@ function Add-DesktopDataTargets {
     param([System.Collections.Generic.List[string]]$List, [string]$Root)
     foreach ($name in $DesktopIdentityNames) { Add-UniquePath -List $List -Path (Join-Path $Root $name) }
     foreach ($name in $DesktopChromiumNames) { Add-UniquePath -List $List -Path (Join-Path $Root $name) }
+    if (Test-Path -LiteralPath $Root) {
+        Get-ChildItem -LiteralPath $Root -Force -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'config.json.corrupt-*' -or $_.Name -like 'memory-migration-state.json.corrupt-*' } |
+            ForEach-Object { Add-UniquePath -List $List -Path $_.FullName }
+    }
 }
 
 function Add-CacheBreakTargets {
     param([System.Collections.Generic.List[string]]$List, [string]$Dir)
     if (Test-Path -LiteralPath $Dir) {
-        Get-ChildItem -LiteralPath $Dir -Force -File -Filter 'cache-break-state-*.json' -ErrorAction SilentlyContinue |
-            ForEach-Object { Add-UniquePath -List $List -Path $_.FullName }
+        Add-UniquePath -List $List -Path $Dir
     }
 }
 
@@ -317,11 +366,11 @@ $raw = New-Object System.Collections.Generic.List[string]
 $claudeHome = Join-Path $env:USERPROFILE '.claude'
 $desktop = Join-Path $env:APPDATA 'Claude'
 
-# claude_desktop_config.json files are edited (device fields stripped), not deleted
+# claude_desktop_config.json files are edited (device & account fields stripped), not deleted
 $configEdits = New-Object System.Collections.Generic.List[string]
 [void]$configEdits.Add((Join-Path $desktop 'claude_desktop_config.json'))
 
-# chat folders we keep and show
+# chat and project memory folders we keep and show
 $keptPaths = New-Object System.Collections.Generic.List[string]
 foreach ($p in @(
     (Join-Path $claudeHome 'projects'),
@@ -335,9 +384,17 @@ foreach ($p in @(
 # desktop data roots for the markers display
 $DesktopRoots = @($desktop)
 
-# CLI (~/.claude): identity, not chats
-foreach ($name in @('.credentials.json', 'backups', 'cache', 'ide', 'session-env')) {
+# CLI (~/.claude): identity, telemetry, policy stamps and caches (not chats or project memory)
+foreach ($name in @(
+    '.claude.json', '.credentials.json', '.last-cleanup',
+    'backups', 'cache', 'ide', 'session-env', 'telemetry', 'shell-snapshots', 'statsig', 'debug',
+    'policy-limits.json', 'policy-limits.json.stamp.json', 'remote-settings.json'
+)) {
     Add-UniquePath -List $raw -Path (Join-Path $claudeHome $name)
+}
+if (Test-Path -LiteralPath $claudeHome) {
+    Get-ChildItem -LiteralPath $claudeHome -Force -File -Filter '.claude.json.*' -ErrorAction SilentlyContinue |
+        ForEach-Object { Add-UniquePath -List $raw -Path $_.FullName }
 }
 
 # Squirrel / normal install desktop data
@@ -443,7 +500,7 @@ if ($procs.Count -eq 0) {
 }
 
 Write-Host ''
-Write-Host 'Kept (local chats):'
+Write-Host 'Kept (local chats & project memory):'
 $keptShown = $false
 foreach ($path in $keptPaths) {
     if (-not (Test-Path -LiteralPath $path)) { continue }
@@ -463,7 +520,7 @@ Write-Host '  Chrome and Edge site data for claude.ai (ajs_anonymous_id)'
 Write-Host '  HKCU uninstall key'
 Write-Host '  claude_desktop_config.json will be edited, not deleted'
 Write-Host ''
-Write-Host 'Login and device IDs are removed. Local chat transcripts stay on disk.'
+Write-Host 'Login and device IDs are removed. Local chat transcripts and project memory stay on disk.'
 
 if (-not $Apply -and -not $Force) {
     Write-Host ''

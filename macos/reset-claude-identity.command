@@ -4,7 +4,8 @@
 #
 # Preview by default: it prints what it found and deletes nothing until you
 # choose 1. The next launch recreates machineID, userID, ant-did, the device
-# registry, telemetry salts, and the Chromium storage. Local chats are kept.
+# registry, telemetry salts, and the Chromium storage. Local chats and
+# project memory (MEMORY.md) are kept.
 #
 # The Claude.app itself, macOS locale, timezone, public IP, and Safari/Chrome
 # cookies for claude.ai are outside this script.
@@ -76,6 +77,12 @@ show_markers() {
   else
     printf '  CLI .claude.json: absent\n'
   fi
+  if [ -f "$CLAUDE_HOME/.claude.json" ]; then
+    printf '  .claude/.claude.json machineID: %s\n' "$(prefix "$(json_get "$CLAUDE_HOME/.claude.json" machineID)")"
+  fi
+  if [ -f "$CLAUDE_HOME/policy-limits.json.stamp.json" ]; then
+    printf '  policy stamp  : %s\n' "$(prefix "$(json_get "$CLAUDE_HOME/policy-limits.json.stamp.json" identity)")"
+  fi
   if [ -f "$APPSUP/ant-did" ]; then
     printf '  ant-did       : %s\n' "$(prefix "$(cat "$APPSUP/ant-did" 2>/dev/null)")"
   else
@@ -104,26 +111,48 @@ add_target() {
   TARGETS+=("$p")
 }
 
-# CLI (~/.claude): identity, not chats
-for n in ".credentials.json" "backups" "cache" "ide" "session-env"; do
+# CLI (~/.claude): identity, telemetry, policy stamps and caches (not chats or project memory)
+for n in \
+  ".claude.json" ".credentials.json" ".last-cleanup" \
+  "backups" "cache" "ide" "session-env" "telemetry" "shell-snapshots" "statsig" "debug" \
+  "policy-limits.json" "policy-limits.json.stamp.json" "remote-settings.json"; do
   add_target "$CLAUDE_HOME/$n"
 done
+for f in "$CLAUDE_HOME"/.claude.json.*; do add_target "$f"; done
+
 # CLI config + its backups / temp copies
 add_target "$HOME_DIR/.claude.json"
 for f in "$HOME_DIR"/.claude.json.*; do add_target "$f"; done
 
-# Desktop app (~/Library/Application Support/Claude): identity + salts
+# Desktop app (~/Library/Application Support/Claude): identity + salts + account-scoped stores
 for n in \
-  "ant-did" "ant-device-registry.json" "remote-control-state.json" "ccd-ids.json" "config.json" \
+  "ant-did" "ant-device-registry.json" "ant-device-key-generation.json" \
+  "remote-control-state.json" "ccd-ids.json" "ccd-session-presets.json" "ccd-session-secrets" \
+  "config.json" "config.json.journal" "plan-usage-history.json" \
+  "buddy-tokens.json" "ssh-remote-server-state.json" \
+  "cowork-enabled-cli-ops.json" "cowork-memory-resets.json" "cowork-clientdata-cache.json" \
+  "cowork-deletion-outbox.json" "cowork-gb-cache.json" "cowork-plugin-mcp-shadow.json" \
+  "cowork-policy-limits-cache.json" "cowork-wipe-record.json" "cowork_account_settings.json" "cowork_settings.json" \
+  "extensions-blocklist.json" "mcp-user-tool-toggles.json" "git-worktrees.json" \
+  "memory-migration-state.json" "remote-session-spaces.json" "restored-ids.json" \
+  "local-session-state.json" "local-sessions.json" "states-10m.json" "stats-cache.json" \
+  "projects-sent-to-a-session-host.json" "msal-cache.json" "msal_token_cache.json" "tokens.json" \
+  "window-state.json" "design" \
+  "spaces-present" "rpm" "plugin-list" "git-shadow" "pending-uploads" "preview-last-frames" "side-session-notes" \
   "Preferences" "Local State" "DIPS" "DIPS-wal" "SharedStorage" "SharedStorage-wal" \
   "InterestGroups" "InterestGroups-wal" "declarative_performance_observer.db" \
   "declarative_performance_observer.db-journal" "fcache"; do
   add_target "$APPSUP/$n"
 done
+for f in "$APPSUP"/config.json.corrupt-* "$APPSUP"/memory-migration-state.json.corrupt-*; do
+  add_target "$f"
+done
+
 # Desktop Chromium storage
 for n in \
   "Network" "Local Storage" "Session Storage" "IndexedDB" "WebStorage" "shared_proto_db" \
-  "sentry" "logs" "Cache" "Code Cache" "GPUCache" "DawnGraphiteCache" "DawnWebGPUCache" \
+  "sentry" "logs" "Cache" "Code Cache" "GPUCache" "GPUPersistentCache" "GrShaderCache" "ShaderCache" \
+  "DawnGraphiteCache" "DawnWebGPUCache" \
   "blob_storage" "Crashpad" "Partitions" "File System" "VideoDecodeStats" "Shared Dictionary" \
   "Service Worker" "Storage"; do
   add_target "$APPSUP/$n"
@@ -137,14 +166,14 @@ add_target "$HOME_DIR/Library/Caches/claude-cli-nodejs"
 add_target "$HOME_DIR/Library/Caches/Claude"
 for d in "$HOME_DIR"/Library/Caches/com.anthropic.claude*; do add_target "$d"; done
 
-# per-session cache-break files in the temp dir
+# temp claude directories (cache-break-state-*.json and per-session scratch state)
 for base in "${TMPDIR%/}/claude" "/tmp/claude"; do
   if [ -d "$base" ]; then
-    for f in "$base"/cache-break-state-*.json; do add_target "$f"; done
+    add_target "$base"
   fi
 done
 
-# ---- kept (chats) ----------------------------------------------------------
+# ---- kept (chats & project memory) -----------------------------------------
 
 KEPT=(
   "$CLAUDE_HOME/projects"
@@ -181,7 +210,7 @@ else
 fi
 
 echo
-echo "Kept (local chats):"
+echo "Kept (local chats & project memory):"
 kept_any=0
 for k in "${KEPT[@]}"; do
   if [ -e "$k" ]; then kept_any=1; printf '  [%6s]  %s\n' "$(size_of "$k")" "$k"; fi
@@ -195,7 +224,7 @@ echo "  macOS locale, timezone, public IP"
 echo "  Safari/Chrome cookies for claude.ai"
 echo "  claude_desktop_config.json will be edited, not deleted"
 echo
-echo "Login and device IDs are removed. Local chat transcripts stay on disk."
+echo "Login and device IDs are removed. Local chat transcripts and project memory stay on disk."
 
 # ---- prompt ----------------------------------------------------------------
 
@@ -253,22 +282,28 @@ if [ "${#FAILED[@]}" -gt 0 ]; then
   done
 fi
 
-# ---- edit claude_desktop_config.json (strip device fields) -----------------
+# ---- edit claude_desktop_config.json (strip device & account fields) -------
 
 CFG="$APPSUP/claude_desktop_config.json"
 if [ -f "$CFG" ] && [ -n "$PY" ]; then
   echo "Editing claude_desktop_config.json"
   "$PY" - "$CFG" <<'EOF' 2>/dev/null || true
-import json, sys
+import json, re, sys
 p = sys.argv[1]
+uuid_re = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 try:
     with open(p, encoding="utf-8-sig") as f:
         cfg = json.load(f)
     prefs = cfg.get("preferences")
     if isinstance(prefs, dict):
         for k in list(prefs.keys()):
-            if k == "remoteToolsDeviceName" or k.endswith("ByAccount"):
+            if k == "remoteToolsDeviceName" or k.endswith("ByAccount") or uuid_re.search(k):
                 prefs.pop(k, None)
+        ep = prefs.get("epitaxyPrefs")
+        if isinstance(ep, dict):
+            for k in list(ep.keys()):
+                if uuid_re.search(k) or k in ("dframe-code-sections", "epitaxy-serene-whistle-decided", "epitaxy-split-suggestion"):
+                    ep.pop(k, None)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 except Exception:
