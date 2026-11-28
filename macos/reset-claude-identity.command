@@ -13,9 +13,6 @@
 # Usage:
 #   bash reset-claude-identity.command            # preview, then prompts 1/2
 #   bash reset-claude-identity.command --apply    # delete without the prompt
-#
-# NOTE: written and syntax-checked on Windows, not yet run on real macOS.
-# Keep it in PREVIEW first and eyeball the target list before choosing 1.
 
 set -u
 
@@ -26,7 +23,17 @@ for arg in "$@"; do
   esac
 done
 
-HOME_DIR="${HOME%/}"
+HOME_DIR="${HOME:-}"
+HOME_DIR="${HOME_DIR%/}"
+if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
+  echo "HOME is not set to a valid directory." >&2
+  exit 1
+fi
+
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_ROOT="${TMP_ROOT%/}"
+[ -n "$TMP_ROOT" ] || TMP_ROOT="/tmp"
+
 CLAUDE_HOME="$HOME_DIR/.claude"
 APPSUP="$HOME_DIR/Library/Application Support/Claude"
 APPSUP_3P="$HOME_DIR/Library/Application Support/Claude-3p"
@@ -35,26 +42,199 @@ APPSUP_3P="$HOME_DIR/Library/Application Support/Claude-3p"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Prefer built-in macOS JXA (osascript -l JavaScript) so JSON parsing/editing
+# works on every Mac without triggering the Xcode Command Line Tools popup
+# that /usr/bin/python3 shows on a fresh system.
+HAS_OSASCRIPT=0
+if have osascript; then HAS_OSASCRIPT=1; fi
+
 PY=""
-if have python3; then PY="python3"; elif have python; then PY="python"; fi
+if [ "$HAS_OSASCRIPT" -eq 0 ]; then
+  if ! have xcode-select || xcode-select -p >/dev/null 2>&1; then
+    if have python3; then PY="python3"; elif have python; then PY="python"; fi
+  fi
+fi
 
 json_get() {
-  # json_get <file> <top-level-key>
+  # json_get <file> <dot.separated.key>
   [ -f "$1" ] || { printf ''; return; }
-  if [ -n "$PY" ]; then
-    "$PY" - "$1" "$2" <<'EOF' 2>/dev/null
+  if [ "$HAS_OSASCRIPT" -eq 1 ]; then
+    osascript -l JavaScript - "$1" "$2" <<'EOF' 2>/dev/null || true
+ObjC.import('Foundation');
+function run(argv) {
+  try {
+    var data = $.NSData.dataWithContentsOfFile(argv[0]);
+    if (!data || data.length === 0) return '';
+    var ns = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
+    if (!ns) return '';
+    var text = ObjC.unwrap(ns);
+    if (text.length > 0 && text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    var cur = JSON.parse(text);
+    var parts = argv[1].split('.');
+    for (var i = 0; i < parts.length; i++) {
+      if (cur === null || typeof cur !== 'object') return '';
+      cur = cur[parts[i]];
+    }
+    if (cur === undefined || cur === null || typeof cur === 'object') return '';
+    return String(cur);
+  } catch (e) {
+    return '';
+  }
+}
+EOF
+  elif [ -n "$PY" ]; then
+    "$PY" - "$1" "$2" <<'EOF' 2>/dev/null || true
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8-sig") as f:
-        d = json.load(f)
-    v = d.get(sys.argv[2], "")
-    print(v if isinstance(v, str) else ("" if v is None else str(v)))
+        cur = json.load(f)
+    for part in sys.argv[2].split("."):
+        if not isinstance(cur, dict):
+            cur = None
+            break
+        cur = cur.get(part)
+    print("" if cur is None or isinstance(cur, (dict, list)) else str(cur))
 except Exception:
     print("")
 EOF
   else
-    sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n 1
+    local leaf="${2##*.}"
+    sed -n "s/.*\"$leaf\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n 1
   fi
+}
+
+json_key_count() {
+  # json_key_count <file>
+  [ -f "$1" ] || { printf ''; return; }
+  if [ "$HAS_OSASCRIPT" -eq 1 ]; then
+    osascript -l JavaScript - "$1" <<'EOF' 2>/dev/null || true
+ObjC.import('Foundation');
+function run(argv) {
+  try {
+    var data = $.NSData.dataWithContentsOfFile(argv[0]);
+    if (!data || data.length === 0) return '';
+    var ns = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
+    if (!ns) return '';
+    var text = ObjC.unwrap(ns);
+    if (text.length > 0 && text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    var obj = JSON.parse(text);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+    return String(Object.keys(obj).length);
+  } catch (e) {
+    return '';
+  }
+}
+EOF
+  elif [ -n "$PY" ]; then
+    "$PY" - "$1" <<'EOF' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        obj = json.load(f)
+    print(str(len(obj)) if isinstance(obj, dict) else "")
+except Exception:
+    print("")
+EOF
+  else
+    printf ''
+  fi
+}
+
+clear_desktop_identity_fields() {
+  local cfg_path="$1"
+  [ -f "$cfg_path" ] || return 0
+  if [ "$HAS_OSASCRIPT" -eq 1 ]; then
+    osascript -l JavaScript - "$cfg_path" <<'EOF' >/dev/null 2>&1
+ObjC.import('Foundation');
+function run(argv) {
+  var p = argv[0];
+  var uuidRe = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+  var data = $.NSData.dataWithContentsOfFile(p);
+  if (!data || data.length === 0) throw new Error('unreadable');
+  var ns = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
+  if (!ns) throw new Error('invalid utf8');
+  var text = ObjC.unwrap(ns);
+  if (text.length > 0 && text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  var cfg = JSON.parse(text);
+  if (cfg && typeof cfg === 'object' && cfg.preferences && typeof cfg.preferences === 'object' && !Array.isArray(cfg.preferences)) {
+    var prefs = cfg.preferences;
+    Object.keys(prefs).forEach(function(k) {
+      if (k === 'remoteToolsDeviceName' || /ByAccount$/.test(k) || uuidRe.test(k)) {
+        delete prefs[k];
+      }
+    });
+    var ep = prefs.epitaxyPrefs;
+    if (ep && typeof ep === 'object' && !Array.isArray(ep)) {
+      var drop = {'dframe-code-sections': 1, 'epitaxy-serene-whistle-decided': 1, 'epitaxy-split-suggestion': 1};
+      Object.keys(ep).forEach(function(k) {
+        if (uuidRe.test(k) || drop[k]) {
+          delete ep[k];
+        }
+      });
+    }
+  }
+  var out = JSON.stringify(cfg, null, 2) + '\n';
+  var outNs = $(out);
+  if (!outNs.writeToFileAtomicallyEncodingError(p, true, $.NSUTF8StringEncoding, null)) {
+    throw new Error('write failed');
+  }
+  return 'ok';
+}
+EOF
+    return $?
+  elif [ -n "$PY" ]; then
+    "$PY" - "$cfg_path" <<'EOF' >/dev/null 2>&1
+import json, re, sys
+p = sys.argv[1]
+uuid_re = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+with open(p, encoding="utf-8-sig") as f:
+    cfg = json.load(f)
+prefs = cfg.get("preferences")
+if isinstance(prefs, dict):
+    for k in list(prefs.keys()):
+        if k == "remoteToolsDeviceName" or k.endswith("ByAccount") or uuid_re.search(k):
+            prefs.pop(k, None)
+    ep = prefs.get("epitaxyPrefs")
+    if isinstance(ep, dict):
+        for k in list(ep.keys()):
+            if uuid_re.search(k) or k in ("dframe-code-sections", "epitaxy-serene-whistle-decided", "epitaxy-split-suggestion"):
+                ep.pop(k, None)
+with open(p, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+EOF
+    return $?
+  elif have node; then
+    node - "$cfg_path" <<'EOF' >/dev/null 2>&1
+const fs = require('fs');
+const p = process.argv[2];
+const uuidRe = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+let text = fs.readFileSync(p, 'utf8');
+if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+const cfg = JSON.parse(text);
+if (cfg && typeof cfg === 'object' && cfg.preferences && typeof cfg.preferences === 'object' && !Array.isArray(cfg.preferences)) {
+  const prefs = cfg.preferences;
+  for (const k of Object.keys(prefs)) {
+    if (k === 'remoteToolsDeviceName' || k.endsWith('ByAccount') || uuidRe.test(k)) {
+      delete prefs[k];
+    }
+  }
+  const ep = prefs.epitaxyPrefs;
+  if (ep && typeof ep === 'object' && !Array.isArray(ep)) {
+    const drop = new Set(['dframe-code-sections', 'epitaxy-serene-whistle-decided', 'epitaxy-split-suggestion']);
+    for (const k of Object.keys(ep)) {
+      if (uuidRe.test(k) || drop.has(k)) {
+        delete ep[k];
+      }
+    }
+  }
+}
+fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+EOF
+    return $?
+  fi
+  echo "Could not edit $cfg_path (no osascript, python, or node available)"
+  return 1
 }
 
 prefix() {
@@ -74,6 +254,13 @@ show_markers() {
   if [ -f "$cli" ]; then
     printf '  CLI machineID : %s\n' "$(prefix "$(json_get "$cli" machineID)")"
     printf '  CLI userID    : %s\n' "$(prefix "$(json_get "$cli" userID)")"
+    local acct_uuid
+    acct_uuid="$(json_get "$cli" oauthAccount.accountUuid)"
+    if [ -n "${acct_uuid//[$'\t\r\n ']/}" ]; then
+      printf '  CLI account   : %s\n' "$(prefix "$acct_uuid")"
+    else
+      printf '  CLI account   : absent\n'
+    fi
   else
     printf '  CLI .claude.json: absent\n'
   fi
@@ -87,6 +274,15 @@ show_markers() {
     printf '  ant-did       : %s\n' "$(prefix "$(cat "$APPSUP/ant-did" 2>/dev/null)")"
   else
     printf '  ant-did       : absent\n'
+  fi
+  if [ -f "$APPSUP/ant-device-registry.json" ]; then
+    local reg_count
+    reg_count="$(json_key_count "$APPSUP/ant-device-registry.json")"
+    if [ -n "$reg_count" ]; then
+      printf '  device registry entries: %s\n' "$reg_count"
+    else
+      printf '  device registry: present\n'
+    fi
   fi
   if [ -f "$APPSUP/remote-control-state.json" ]; then
     printf '  telemetrySalt : %s\n' "$(prefix "$(json_get "$APPSUP/remote-control-state.json" telemetrySalt)")"
@@ -105,9 +301,15 @@ add_target() {
   # safety: only ever touch paths under $HOME or the per-user temp dir
   case "$p" in
     "$HOME_DIR"/*) : ;;
-    "${TMPDIR%/}"/*|/tmp/*) : ;;
+    "$TMP_ROOT"/*|/tmp/*) : ;;
     *) return 0 ;;
   esac
+  local existing
+  if [ "${#TARGETS[@]}" -gt 0 ]; then
+    for existing in "${TARGETS[@]}"; do
+      [ "$existing" = "$p" ] && return 0
+    done
+  fi
   TARGETS+=("$p")
 }
 
@@ -167,7 +369,7 @@ add_target "$HOME_DIR/Library/Caches/Claude"
 for d in "$HOME_DIR"/Library/Caches/com.anthropic.claude*; do add_target "$d"; done
 
 # temp claude directories (cache-break-state-*.json and per-session scratch state)
-for base in "${TMPDIR%/}/claude" "/tmp/claude"; do
+for base in "$TMP_ROOT/claude" "/tmp/claude"; do
   if [ -d "$base" ]; then
     add_target "$base"
   fi
@@ -267,10 +469,12 @@ remove_target() {
 }
 
 FAILED=()
-for t in "${TARGETS[@]}"; do
-  echo "Removing $t"
-  remove_target "$t" || FAILED+=("$t")
-done
+if [ "${#TARGETS[@]}" -gt 0 ]; then
+  for t in "${TARGETS[@]}"; do
+    echo "Removing $t"
+    remove_target "$t" || FAILED+=("$t")
+  done
+fi
 
 # retry once for anything still locked
 if [ "${#FAILED[@]}" -gt 0 ]; then
@@ -285,30 +489,9 @@ fi
 # ---- edit claude_desktop_config.json (strip device & account fields) -------
 
 CFG="$APPSUP/claude_desktop_config.json"
-if [ -f "$CFG" ] && [ -n "$PY" ]; then
+if [ -f "$CFG" ]; then
   echo "Editing claude_desktop_config.json"
-  "$PY" - "$CFG" <<'EOF' 2>/dev/null || true
-import json, re, sys
-p = sys.argv[1]
-uuid_re = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-try:
-    with open(p, encoding="utf-8-sig") as f:
-        cfg = json.load(f)
-    prefs = cfg.get("preferences")
-    if isinstance(prefs, dict):
-        for k in list(prefs.keys()):
-            if k == "remoteToolsDeviceName" or k.endswith("ByAccount") or uuid_re.search(k):
-                prefs.pop(k, None)
-        ep = prefs.get("epitaxyPrefs")
-        if isinstance(ep, dict):
-            for k in list(ep.keys()):
-                if uuid_re.search(k) or k in ("dframe-code-sections", "epitaxy-serene-whistle-decided", "epitaxy-split-suggestion"):
-                    ep.pop(k, None)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-except Exception:
-    pass
-EOF
+  clear_desktop_identity_fields "$CFG" || FAILED+=("$CFG")
 fi
 
 # ---- Keychain login item (best effort) -------------------------------------

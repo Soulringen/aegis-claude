@@ -14,10 +14,10 @@
   cookies are outside this script.
 
 .PARAMETER Apply
-  Stop Claude processes and delete the stores.
+  Stop Claude processes and delete the stores without prompting 1/2 or pausing on exit.
 
 .PARAMETER Force
-  Skip the YES prompt. Only meaningful with -Apply.
+  Run completely unattended with -Apply (skips any UAC elevation prompt if a service needs Administrator rights). Ignored without -Apply.
 
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\Reset-ClaudeIdentity.ps1
@@ -45,8 +45,13 @@ function Wait-Exit {
     )
     Write-Host ''
     Write-Host $Message
-    Write-Host ''
-    Read-Host 'Нажмите Enter, чтобы закрыть окно' | Out-Null
+    if (-not $Apply) {
+        Write-Host ''
+        try {
+            Read-Host 'Нажмите Enter, чтобы закрыть окно' | Out-Null
+        } catch {
+        }
+    }
     exit $Code
 }
 
@@ -240,6 +245,65 @@ function Get-ClaudeProcesses {
         if ($match) { [void]$hits.Add($proc) }
     }
     return @($hits.ToArray())
+}
+
+function Test-IsAdmin {
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
+function Get-ClaudeServices {
+    return @(
+        Get-Service -ErrorAction SilentlyContinue |
+            Where-Object {
+                ($_.Name -like '*cowork*' -or $_.DisplayName -like '*Cowork*' -or $_.DisplayName -like '*Claude*') -and
+                $_.Status -ne 'Stopped'
+            }
+    )
+}
+
+function Stop-ClaudeServices {
+    param([switch]$NoElevationPrompt)
+
+    $running = @(Get-ClaudeServices)
+    if ($running.Count -eq 0) { return }
+
+    foreach ($svc in $running) {
+        Write-Host ('Stopping service {0}' -f $svc.Name)
+        Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+    }
+
+    $stillRunning = @(Get-ClaudeServices)
+    if ($stillRunning.Count -eq 0) { return }
+
+    if (-not (Test-IsAdmin) -and -not $NoElevationPrompt) {
+        $names = @($stillRunning | ForEach-Object { $_.Name })
+        Write-Host ('Requesting Administrator permission to stop service(s): {0}' -f ($names -join ', '))
+        $escapedNames = @($names | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" }) -join ', '
+        $cmd = "Stop-Service -Name @($escapedNames) -Force -ErrorAction SilentlyContinue"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        try {
+            Start-Process -FilePath $psExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -Verb RunAs -WindowStyle Hidden -Wait -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Host 'Administrator elevation was declined or unavailable.'
+        }
+    }
+
+    for ($i = 0; $i -lt 10; $i++) {
+        $stillRunning = @(Get-ClaudeServices)
+        if ($stillRunning.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 500
+    }
+
+    foreach ($svc in $stillRunning) {
+        Write-Host ('WARNING: Не удалось остановить службу {0} ({1}) — нужны права администратора.' -f $svc.Name, $svc.Status)
+    }
 }
 
 function Test-TreeHasReparsePoint {
@@ -488,12 +552,16 @@ if ($targets.Count -eq 0) {
     }
 }
 
+$svcs = @(Get-ClaudeServices)
 $procs = @(Get-ClaudeProcesses)
 Write-Host ''
-Write-Host 'Processes that -Apply will stop:'
-if ($procs.Count -eq 0) {
+Write-Host 'Services and processes that will be stopped:'
+if ($svcs.Count -eq 0 -and $procs.Count -eq 0) {
     Write-Host '  none'
 } else {
+    foreach ($svc in $svcs) {
+        Write-Host ('  SVC  {0} ({1})' -f $svc.Name, $svc.Status)
+    }
     foreach ($proc in $procs) {
         Write-Host ('  PID {0}  {1}' -f $proc.ProcessId, $proc.Name)
     }
@@ -522,7 +590,7 @@ Write-Host '  claude_desktop_config.json will be edited, not deleted'
 Write-Host ''
 Write-Host 'Login and device IDs are removed. Local chat transcripts and project memory stay on disk.'
 
-if (-not $Apply -and -not $Force) {
+if (-not $Apply) {
     Write-Host ''
     while ($true) {
         try {
@@ -537,14 +605,8 @@ if (-not $Apply -and -not $Force) {
 }
 
 Write-Host ''
-Get-Service -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like '*cowork*' -or $_.DisplayName -like '*Cowork*' -or $_.DisplayName -like '*Claude*' } |
-    ForEach-Object {
-        if ($_.Status -ne 'Stopped') {
-            Write-Host ('Stopping service {0}' -f $_.Name)
-            Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
-        }
-    }
+Stop-ClaudeServices -NoElevationPrompt:($Apply -and $Force)
+$procs = @(Get-ClaudeProcesses)
 foreach ($proc in $procs) {
     Write-Host ('Stopping PID {0} {1}' -f $proc.ProcessId, $proc.Name)
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
